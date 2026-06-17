@@ -4,7 +4,7 @@ import Foundation
 final class UpdateService: @unchecked Sendable {
     static let shared = UpdateService()
 
-    private let repoOwner = "Lyxxxx718"
+    private let repoOwner = "RRRadiant"
     private let repoName = "ClaudeCodePanel"
     private let session = URLSession.shared
 
