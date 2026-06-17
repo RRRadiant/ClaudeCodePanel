@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Swift / SPM
+.build/
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+
+# Build outputs
+build/
+
+# IDE
+.vscode/
+.idea/
+
+# Misc
+*.swp
+*.bak
+.reasonix/
