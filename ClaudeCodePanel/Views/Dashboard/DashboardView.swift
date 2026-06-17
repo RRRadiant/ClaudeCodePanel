@@ -2,15 +2,21 @@ import SwiftUI
 
 struct DashboardView: View {
     @State private var viewModel = DashboardViewModel()
+    @State private var updateVM = UpdateViewModel()
 
     var body: some View {
         ScrollView {
             VStack(spacing: 28) {
                 // Header
                 HStack(alignment: .firstTextBaseline) {
-                    Text("概览")
-                        .font(.largeTitle)
-                        .fontWeight(.bold)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("概览")
+                            .font(.largeTitle)
+                            .fontWeight(.bold)
+                        Text("版本 \(updateVM.currentVersion)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     Spacer()
                     if viewModel.isLoading {
                         ProgressView().scaleEffect(0.7)
@@ -19,6 +25,9 @@ struct DashboardView: View {
 
                 // Status row
                 statusBar
+
+                // Update section
+                updateSection
 
                 // Model tier cards
                 modelTierGrid
@@ -30,6 +39,89 @@ struct DashboardView: View {
             .frame(maxWidth: 720)
         }
         .task { await viewModel.loadSummary() }
+    }
+
+    // MARK: - Update Section
+
+    private var updateSection: some View {
+        GlassCard(variant: .compact) {
+            HStack(spacing: 12) {
+                Image(systemName: updateIcon)
+                    .font(.system(size: 16))
+                    .foregroundStyle(updateColor)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("软件更新")
+                        .font(.callout)
+                        .fontWeight(.medium)
+                    Text(updateMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                switch updateVM.updateStatus {
+                case .updateAvailable:
+                    HStack(spacing: 8) {
+                        GlassButton(
+                            title: "下载",
+                            systemImage: "arrow.down.circle",
+                            variant: .primary,
+                            size: .small,
+                            action: { updateVM.downloadUpdate() }
+                        )
+                        GlassButton(
+                            title: "查看",
+                            systemImage: "safari",
+                            variant: .secondary,
+                            size: .small,
+                            action: { updateVM.openReleasePage() }
+                        )
+                    }
+                case .checking:
+                    ProgressView().scaleEffect(0.7)
+                default:
+                    GlassButton(
+                        title: "检查更新",
+                        systemImage: "arrow.triangle.2.circlepath",
+                        variant: .ghost,
+                        size: .small,
+                        action: { Task { await updateVM.checkForUpdates() } }
+                    )
+                }
+            }
+        }
+    }
+
+    private var updateIcon: String {
+        switch updateVM.updateStatus {
+        case .idle: "icloud"
+        case .checking: "arrow.triangle.2.circlepath"
+        case .upToDate: "checkmark.icloud"
+        case .updateAvailable: "exclamationmark.icloud"
+        case .error: "xmark.icloud"
+        }
+    }
+
+    private var updateColor: Color {
+        switch updateVM.updateStatus {
+        case .idle: .secondary
+        case .checking: .blue
+        case .upToDate: .green
+        case .updateAvailable: .orange
+        case .error: .red
+        }
+    }
+
+    private var updateMessage: String {
+        switch updateVM.updateStatus {
+        case .idle: "点击检查新版本"
+        case .checking: "正在检查..."
+        case .upToDate(let v): "已是最新版本 · \(v)"
+        case .updateAvailable(let v, _): "新版本 \(v) 可用"
+        case .error(let msg): "检查失败 · \(msg)"
+        }
     }
 
     // MARK: - Status Bar
