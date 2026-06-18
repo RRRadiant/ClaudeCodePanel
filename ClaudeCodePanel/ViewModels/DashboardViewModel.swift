@@ -27,10 +27,8 @@ final class DashboardViewModel {
     func loadSummary() async {
         isLoading = true
 
-        // Detect Claude CLI (dynamic home dir, not blocking main actor)
         await detectClaudeCLI()
 
-        // Sync config
         let synced = SyncService.shared.syncAll()
         apiProvider = synced.provider.displayName
         baseURL = synced.baseURL
@@ -40,9 +38,7 @@ final class DashboardViewModel {
         mcpServerCount = synced.mcpServers.count
         activeMCPServerCount = synced.mcpServers.filter(\.enabled).count
 
-        // Tier models from SyncService (already merged settings + local overrides)
         tierModels = synced.tierModels
-        // Fallback: use provider defaults for missing tiers
         for tier in ModelTier.allCases where tierModels[tier]?.isEmpty ?? true {
             tierModels[tier] = synced.provider.knownModels[tier]?.first ?? ""
         }
@@ -59,7 +55,6 @@ final class DashboardViewModel {
 
     // MARK: - Claude CLI Detection
 
-    /// Detect the Claude Code CLI version without blocking the main actor.
     private func detectClaudeCLI() async {
         let home = NSHomeDirectory()
         let claudePaths = [

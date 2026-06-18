@@ -20,7 +20,7 @@ final class UpdateViewModel {
 
     /// Current app version from bundle.
     var currentVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        Bundle.appVersion
     }
 
     func checkForUpdates() async {

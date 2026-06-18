@@ -122,9 +122,14 @@ final class UpdateService: @unchecked Sendable {
         }
 
         let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else { return nil }
+        guard let http = response as? HTTPURLResponse else {
+            throw UpdateError.networkError("Invalid response")
+        }
 
-        guard http.statusCode == 200 else { return nil }
+        guard http.statusCode == 200 else {
+            if http.statusCode == 404 { throw UpdateError.noReleases }
+            throw UpdateError.networkError("HTTP \(http.statusCode)")
+        }
 
         let latest = try JSONDecoder().decode(GHRelease.self, from: data)
         guard let current = currentAppVersion(),
@@ -154,20 +159,32 @@ final class UpdateService: @unchecked Sendable {
     // MARK: - Version helpers
 
     private func currentAppVersion() -> String? {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        Bundle.appVersionOrNil
     }
 
+    /// Compare two semantic version strings (e.g. "1.8" vs "1.9").
+    /// Returns true if `versionA` is strictly greater than `versionB`.
+    /// Non-numeric segments (e.g. "beta") are compared lexicographically as tie-breakers.
     private func compareVersions(_ a: String, isGreaterThan b: String) -> Bool {
-        let aParts = a.split(separator: ".").compactMap { Int($0) }
-        let bParts = b.split(separator: ".").compactMap { Int($0) }
+        let aParts = a.split(separator: ".")
+        let bParts = b.split(separator: ".")
         let maxLen = max(aParts.count, bParts.count)
         for i in 0..<maxLen {
-            let av = i < aParts.count ? aParts[i] : 0
-            let bv = i < bParts.count ? bParts[i] : 0
-            if av > bv { return true }
-            if av < bv { return false }
+            let asub = i < aParts.count ? aParts[i] : ""
+            let bsub = i < bParts.count ? bParts[i] : ""
+            if let an = Int(asub), let bn = Int(bsub) {
+                if an > bn { return true }
+                if an < bn { return false }
+            } else if let an = Int(asub) {
+                return true  // numeric > non-numeric
+            } else if let bn = Int(bsub) {
+                return false // non-numeric < numeric
+            } else {
+                if asub > bsub { return true }
+                if asub < bsub { return false }
+            }
         }
-        return false
+        return false // equal
     }
 }
 

@@ -43,6 +43,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private var currentVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        Bundle.appVersion
     }
 }
