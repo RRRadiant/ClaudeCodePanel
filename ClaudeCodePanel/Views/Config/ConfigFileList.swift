@@ -33,19 +33,20 @@ struct ConfigFileList: View {
     private func fileRow(_ file: ConfigFileInfo) -> some View {
         let isSel = selectedFile?.id == file.id
         return HStack(spacing: 10) {
-            Image(systemName: file.type.iconName)
+            Image(systemName: file.iconName)
                 .font(.system(size: 15))
                 .foregroundStyle(isSel ? Color.accentColor : .secondary)
                 .frame(width: 20)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(file.type.displayName)
+                Text(file.name)
                     .font(.callout)
                     .fontWeight(isSel ? .semibold : .regular)
                     .foregroundStyle(isSel ? Color.accentColor : .primary)
-                Text(file.name)
-                    .font(.caption)
+                Text(file.description)
+                    .font(.caption2)
                     .foregroundStyle(.tertiary)
+                    .lineLimit(1)
             }
 
             Spacer()

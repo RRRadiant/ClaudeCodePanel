@@ -16,13 +16,9 @@ final class ConfigFileService: @unchecked Sendable {
         claudeDirectory.appendingPathComponent("settings.local.json")
     }
 
-    /// ~/.claude.json — Claude Code global config (contains mcpServers, projects, etc.)
+    /// ~/.claude.json — Claude Code global config (mcpServers, projects, stats)
     var claudeGlobalConfigPath: URL {
         fileManager.homeDirectoryForCurrentUser.appendingPathComponent(".claude.json")
-    }
-
-    var mcpPath: URL {
-        claudeDirectory.appendingPathComponent("mcp.json")
     }
 
     var skillsDirectory: URL {
@@ -37,35 +33,45 @@ final class ConfigFileService: @unchecked Sendable {
         claudeDirectory.appendingPathComponent("commands")
     }
 
+    // MARK: - File listing
+
+    /// Claude Code's 3 core config files in priority order.
+    private let coreFiles: [(name: String, desc: String, icon: String)] = [
+        ("claude.json",       "主配置 — MCP 服务器、项目绑定、使用统计", "server.rack"),
+        ("settings.json",     "全局设置 — 模型、环境变量、插件、主题", "gearshape"),
+        ("settings.local.json", "本地设置 — 权限、项目级覆盖",        "lock.shield"),
+    ]
+
     func listConfigFiles() -> [ConfigFileInfo] {
         var files: [ConfigFileInfo] = []
 
-        // Include ~/.claude.json (global Claude config with MCP servers)
-        let claudeGlobalURL = claudeGlobalConfigPath
-        if fileManager.fileExists(atPath: claudeGlobalURL.path) {
-            files.append(fileInfo(for: claudeGlobalURL, type: .specificConfig("claude.json")))
+        // Core files first (always shown, with descriptions)
+        for core in coreFiles {
+            let url = core.name == "claude.json"
+                ? claudeGlobalConfigPath
+                : claudeDirectory.appendingPathComponent(core.name)
+            if fileManager.fileExists(atPath: url.path) {
+                files.append(fileInfo(for: url, type: .coreConfig(name: core.name, desc: core.desc, icon: core.icon)))
+            }
         }
 
-        // Scan for all JSON, TOML, YAML files directly in ~/.claude/
-        let knownFileNames: Set<String> = ["settings.json", "settings.local.json", "mcp.json", "claude.json"]
-        if let topLevelFiles = try? fileManager.contentsOfDirectory(
+        // Any other JSON/TOML/YAML files in ~/.claude/
+        let coreNames = Set(coreFiles.map(\.name))
+        if let entries = try? fileManager.contentsOfDirectory(
             at: claudeDirectory,
             includingPropertiesForKeys: [.contentModificationDateKey],
             options: [.skipsHiddenFiles]
         ) {
-            for url in topLevelFiles {
+            for url in entries {
                 let name = url.lastPathComponent
                 let ext = url.pathExtension.lowercased()
-                // Only include known config extensions
                 guard ext == "json" || ext == "toml" || ext == "yaml" || ext == "yml" else { continue }
-                // Exclude hidden files
-                if name.hasPrefix(".") { continue }
-                let type: ConfigFileInfo.FileType = knownFileNames.contains(name) ? .specificConfig(name) : .config
-                files.append(fileInfo(for: url, type: type))
+                if name.hasPrefix(".") || coreNames.contains(name) { continue }
+                files.append(fileInfo(for: url, type: .otherConfig(desc: "其他配置文件")))
             }
         }
 
-        return files.sorted { $0.name < $1.name }
+        return files
     }
 
     private func fileInfo(for url: URL, type: ConfigFileInfo.FileType) -> ConfigFileInfo {
@@ -80,6 +86,8 @@ final class ConfigFileService: @unchecked Sendable {
             sizeBytes: size
         )
     }
+
+    // MARK: - I/O
 
     func readFile(at path: String) throws -> String {
         return try String(contentsOfFile: path, encoding: .utf8)
@@ -119,6 +127,8 @@ final class ConfigFileService: @unchecked Sendable {
     }
 }
 
+// MARK: - Config File Info
+
 struct ConfigFileInfo: Identifiable {
     let id = UUID()
     let name: String
@@ -127,42 +137,23 @@ struct ConfigFileInfo: Identifiable {
     let lastModified: Date
     let sizeBytes: Int64
 
+    var description: String {
+        switch type {
+        case .coreConfig(_, let desc, _): return desc
+        case .otherConfig(let desc): return desc
+        }
+    }
+
+    var iconName: String {
+        switch type {
+        case .coreConfig(_, _, let icon): return icon
+        case .otherConfig: return "doc.text"
+        }
+    }
+
     enum FileType: Equatable {
-        case config
-        case specificConfig(String)
-
-        var iconName: String {
-            switch self {
-            case .config: return "doc.text"
-            case .specificConfig(let name):
-                switch name {
-                case "settings.json", "settings.local.json": return "gearshape"
-                case "mcp.json": return "server.rack"
-                default: return "doc.text"
-                }
-            }
-        }
-
-        var displayName: String {
-            switch self {
-            case .config: return "Config"
-            case .specificConfig(let name):
-                switch name {
-                case "claude.json": return "Claude Global"
-                case "settings.json": return "Settings"
-                case "settings.local.json": return "Local Settings"
-                case "mcp.json": return "MCP Config"
-                default: return name
-                }
-            }
-        }
-
-        var rawValue: String {
-            switch self {
-            case .config: return "config"
-            case .specificConfig(let name): return name
-            }
-        }
+        case coreConfig(name: String, desc: String, icon: String)
+        case otherConfig(desc: String)
     }
 }
 

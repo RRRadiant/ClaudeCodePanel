@@ -21,7 +21,7 @@ struct ConfigEditorView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(file.name)
                                 .font(.headline)
-                            Text(file.path)
+                            Text(file.description)
                                 .font(.caption)
                                 .foregroundStyle(.tertiary)
                                 .lineLimit(1)

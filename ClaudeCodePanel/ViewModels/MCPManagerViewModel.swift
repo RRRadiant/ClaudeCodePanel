@@ -55,23 +55,10 @@ final class MCPManagerViewModel {
         errorMessage = nil
         let aliases = loadDisplayNames()
 
-        // Always sync from ~/.claude.json as primary source
+        // Always sync from ~/.claude.json — the ONLY MCP config source
         let synced = SyncService.shared.syncAll()
-        if synced.didSync {
-            servers = synced.mcpServers
-            didAttemptSync = true
-        } else {
-            // Fallback: try mcp.json
-            if let data = try? Data(contentsOf: configService.mcpPath),
-               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let serverList = dict["servers"] as? [[String: Any]] {
-                servers = serverList.compactMap { MCPServerConfig.fromJSON($0) }
-                didAttemptSync = !serverList.isEmpty
-            } else {
-                servers = []
-                didAttemptSync = true
-            }
-        }
+        servers = synced.mcpServers
+        didAttemptSync = synced.didSync
 
         // Restore display aliases
         for (name, alias) in aliases {
