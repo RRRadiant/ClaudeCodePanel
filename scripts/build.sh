@@ -22,7 +22,7 @@ python3 "$ROOT/scripts/generate_icon.py"
 echo ""
 echo "[2/6] Building Swift binary..."
 cd "$ROOT"
-swift build -c release --arch arm64 2>&1 | tail -3
+swift build -c release --arch arm64 --disable-sandbox 2>&1 | tail -3
 
 RELEASE_BIN="$ROOT/.build/arm64-apple-macosx/release/ClaudeCodePanel"
 DEBUG_BIN="$ROOT/.build/debug/ClaudeCodePanel"
@@ -115,63 +115,53 @@ echo ""
 APP_SIZE=$(/usr/bin/du -sk "$APP_BUNDLE" | /usr/bin/awk '{print $1}')
 echo "  App size: $(( APP_SIZE )) KB"
 
-# ── Step 6: Create DMG ──────────────────────────────────────
+# ── Step 6: Package ──────────────────────────────────────
 echo ""
-echo "[6/6] Creating DMG..."
+echo "[6/6] Packaging..."
 
-DMG_TMP="$BUILD_DIR/tmp.dmg"
 DMG_OUT="$BUILD_DIR/${DMG_NAME}.dmg"
+rm -f "$DMG_OUT" "$BUILD_DIR/${DMG_NAME}.zip"
 
-# Remove old DMGs
-rm -f "$DMG_TMP" "$DMG_OUT"
-
-# Detach any lingering mounts
-/usr/bin/hdiutil detach "/Volumes/$VOL_NAME" 2>/dev/null || true
-
-# Create read-write DMG
-/usr/bin/hdiutil create \
+# Try hdiutil, fall back to zip if sandboxed
+if /usr/bin/hdiutil create \
     -volname "$VOL_NAME" \
-    -size 10m \
-    -layout NONE \
-    -fs HFS+ \
-    -quiet \
-    "$DMG_TMP"
+    -srcfolder "$APP_BUNDLE" \
+    -format UDZO \
+    -imagekey zlib-level=9 \
+    -size 20m \
+    "$DMG_OUT" 2>/dev/null; then
+    DMG_SIZE=$(/usr/bin/stat -f%z "$DMG_OUT")
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  ✓ $DMG_NAME.dmg — $(( DMG_SIZE / 1024 )) KB"
+    echo "  $DMG_OUT"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+else
+    # Sandbox prevents DMG creation — create zip as fallback
+    echo "  ⚠ hdiutil restricted by sandbox — creating zip + DMG script"
+    cd "$BUILD_DIR"
+    /usr/bin/zip -r "${DMG_NAME}.zip" "$APP_NAME.app" -q
+    ZIP_SIZE=$(/usr/bin/stat -f%z "${DMG_NAME}.zip")
+    
+    # Also write a helper script for the user to create the DMG
+    cat > "$BUILD_DIR/make_dmg.sh" << 'DMGSCRIPT'
+#!/bin/bash
+cd "$(dirname "$0")"
+echo "Creating DMG..."
+hdiutil create -volname "Claude Code Panel" \
+    -srcfolder "Claude Code Panel.app" \
+    -format UDZO -imagekey zlib-level=9 \
+    "ClaudeCodePanel-1.8.dmg"
+echo "Done: $(pwd)/ClaudeCodePanel-1.8.dmg"
+open -R ClaudeCodePanel-1.8.dmg
+DMGSCRIPT
+    chmod +x "$BUILD_DIR/make_dmg.sh"
 
-# Mount — parse mount point from hdiutil output (handles spaces in volume names)
-HDIUTIL_OUT=$(/usr/bin/hdiutil attach -readwrite -noverify -noautoopen "$DMG_TMP" 2>&1)
-# Extract the path after "/Volumes/" on the line that contains it
-MOUNT_POINT=$(echo "$HDIUTIL_OUT" | /usr/bin/grep -o '/Volumes/.*' | /usr/bin/head -1)
-echo "  Mounted at: $MOUNT_POINT"
-
-# Remove stale symlink if present
-rm -f "$MOUNT_POINT/Applications" 2>/dev/null || true
-
-# Copy app
-rm -rf "$MOUNT_POINT/$APP_NAME" 2>/dev/null || true
-cp -R "$APP_BUNDLE" "$MOUNT_POINT/"
-
-# Create Applications symlink
-ln -s /Applications "$MOUNT_POINT/Applications"
-
-# Set custom icon for the volume (copy icon to root as .VolumeIcon.icns)
-cp "$BUILD_DIR/AppIcon.icns" "$MOUNT_POINT/.VolumeIcon.icns"
-/usr/bin/SetFile -a C "$MOUNT_POINT" 2>/dev/null || true
-
-# Note: Finder icon layout is left at macOS defaults.
-# The .DS_Store with custom positions can be added later via
-# `create-dmg` or manual layout.
-
-# Detach (force if needed)
-/usr/bin/hdiutil detach "$MOUNT_POINT" -force -quiet 2>/dev/null || true
-
-# Convert to compressed read-only
-echo "  Compressing..."
-/usr/bin/hdiutil convert "$DMG_TMP" -format UDZO -imagekey zlib-level=9 -o "$DMG_OUT" -quiet
-rm -f "$DMG_TMP"
-
-DMG_SIZE=$(/usr/bin/stat -f%z "$DMG_OUT")
-echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  ✓ $DMG_NAME.dmg — $(( DMG_SIZE / 1024 )) KB"
-echo "  $DMG_OUT"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  ✓ ${DMG_NAME}.zip — $(( ZIP_SIZE / 1024 )) KB"
+    echo "  $BUILD_DIR/${DMG_NAME}.zip"
+    echo ""
+    echo "  Create DMG: bash $BUILD_DIR/make_dmg.sh"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+fi
