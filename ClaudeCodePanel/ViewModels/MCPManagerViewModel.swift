@@ -230,42 +230,49 @@ final class MCPManagerViewModel {
     }
 
     private func persistServers() async {
-        let mcpPath = configService.mcpPath
+        let claudePath = configService.claudeGlobalConfigPath
 
-        // Read existing mcp.json (preserve any unknown keys)
-        var root = (try? configService.readJSON(at: mcpPath)) ?? [:]
-        // Keep top-level keys we don't manage
-        var servers: [[String: Any]] = []
-        var managedNames: Set<String> = []
+        // Read existing ~/.claude.json
+        guard var root = try? configService.readJSON(at: claudePath) else {
+            errorMessage = "无法读取 ~/.claude.json"
+            return
+        }
 
-        for srv in self.servers {
+        // Rebuild global mcpServers dict from current state
+        var mcpServers: [String: [String: Any]] = [:]
+        for srv in servers {
             switch srv.serverType {
             case .stdio, .sse:
-                var entry = srv.toClaudeJSONEntry()
-                entry["name"] = srv.name
-                entry["enabled"] = srv.enabled
-                servers.append(entry)
-                managedNames.insert(srv.name)
+                mcpServers[srv.name] = srv.toClaudeJSONEntry()
             case .builtin, .plugin:
-                managedNames.insert(srv.name)
+                break
             }
         }
+        root["mcpServers"] = mcpServers
 
-        // Preserve servers not managed by us
-        if let existingServers = root["servers"] as? [[String: Any]] {
-            for entry in existingServers {
-                if let name = entry["name"] as? String, !managedNames.contains(name) {
-                    servers.append(entry)
-                }
+        // Update per-project mcpServers references
+        if var projects = root["projects"] as? [String: [String: Any]] {
+            // Group servers by project
+            var projNames: [String: [String]] = [:] // project path -> [server names]
+
+            for srv in servers where srv.sourceProject != nil {
+                guard srv.serverType == .stdio || srv.serverType == .sse else { continue }
+                projNames[srv.sourceProject!, default: []].append(srv.name)
             }
-        }
 
-        root["servers"] = servers
+            for (projPath, names) in projNames {
+                var pdata = projects[projPath] ?? [:]
+                pdata["mcpServers"] = names
+                projects[projPath] = pdata
+            }
+
+            root["projects"] = projects
+        }
 
         do {
-            try configService.writeJSON(root, to: mcpPath)
+            try configService.writeJSON(root, to: claudePath)
         } catch {
-            errorMessage = "保存到 mcp.json 失败: \(error.localizedDescription)"
+            errorMessage = "保存失败: \(error.localizedDescription)"
         }
     }
 

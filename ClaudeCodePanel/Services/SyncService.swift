@@ -43,33 +43,11 @@ final class SyncService: @unchecked Sendable {
             }
         }
 
-        // --- MCP: mcp.json is primary (Claude Code's native format) ---
-        result.mcpServers = extractMCPFromMCPJSON()
-
-        // Fallback: ~/.claude.json (legacy format)
-        if result.mcpServers.isEmpty {
-            result.mcpServers = extractMCPFromClaudeGlobalJSON()
-        }
+        // MCP servers from ~/.claude.json (the only MCP config Claude Code reads)
+        result.mcpServers = extractMCPFromClaudeGlobalJSON()
 
         result.didSync = true
         return result
-    }
-
-    // MARK: - mcp.json (primary, array format)
-
-    /// Parse ~/.claude/mcp.json — Claude Code's native MCP config.
-    /// Format: { "servers": [{ "name":"...", "type":"...", ... }] }
-    private func extractMCPFromMCPJSON() -> [MCPServerConfig] {
-        guard let dict = try? configService.readJSON(at: configService.mcpPath),
-              let serverList = dict["servers"] as? [[String: Any]] else {
-            return []
-        }
-
-        return serverList.compactMap { entry in
-            var mutable = entry
-            // name may be in the entry dict directly
-            return MCPServerConfig.fromJSON(mutable)
-        }
     }
 
     // MARK: - Helpers
@@ -80,34 +58,19 @@ final class SyncService: @unchecked Sendable {
         if let baseURL = env["ANTHROPIC_BASE_URL"], !baseURL.isEmpty {
             c.baseURL = baseURL
             let lowercased = baseURL.lowercased()
-            if lowercased.contains("deepseek") {
-                c.provider = .deepseek
-            } else if lowercased.contains("openai") {
-                c.provider = .openai
-            } else {
-                c.provider = .anthropic
-            }
+            if lowercased.contains("deepseek") { c.provider = .deepseek }
+            else if lowercased.contains("openai") { c.provider = .openai }
+            else { c.provider = .anthropic }
         }
 
-        if let authToken = env["ANTHROPIC_AUTH_TOKEN"], !authToken.isEmpty {
-            c.apiKey = authToken
-        }
-        if let model = env["ANTHROPIC_MODEL"], !model.isEmpty {
-            c.selectedModel = model
-        }
+        if let authToken = env["ANTHROPIC_AUTH_TOKEN"], !authToken.isEmpty { c.apiKey = authToken }
+        if let model = env["ANTHROPIC_MODEL"], !model.isEmpty { c.selectedModel = model }
 
-        let modelKeys = [
-            "ANTHROPIC_DEFAULT_OPUS_MODEL",
-            "ANTHROPIC_DEFAULT_SONNET_MODEL",
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-        ]
+        let modelKeys = ["ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL"]
         var models: [String] = []
         for key in modelKeys {
             if let model = env[key], !model.isEmpty {
-                let cleaned = model
-                    .replacingOccurrences(of: "[1M]", with: "")
-                    .replacingOccurrences(of: "[1m]", with: "")
-                    .trimmingCharacters(in: .whitespaces)
+                let cleaned = model.replacingOccurrences(of: "[1M]", with: "").replacingOccurrences(of: "[1m]", with: "").trimmingCharacters(in: .whitespaces)
                 if !cleaned.isEmpty { models.append(cleaned) }
             }
         }
@@ -115,10 +78,7 @@ final class SyncService: @unchecked Sendable {
 
         for tier in ModelTier.allCases {
             if let model = env[tier.envKey], !model.isEmpty {
-                let cleaned = model
-                    .replacingOccurrences(of: "[1M]", with: "")
-                    .replacingOccurrences(of: "[1m]", with: "")
-                    .trimmingCharacters(in: .whitespaces)
+                let cleaned = model.replacingOccurrences(of: "[1M]", with: "").replacingOccurrences(of: "[1m]", with: "").trimmingCharacters(in: .whitespaces)
                 if !cleaned.isEmpty { c.tierModels[tier] = cleaned }
             }
         }
@@ -126,7 +86,7 @@ final class SyncService: @unchecked Sendable {
         return c
     }
 
-    /// Extract MCP servers from ~/.claude.json (legacy format).
+    /// Extract MCP servers from ~/.claude.json — the ONLY MCP config Claude Code reads.
     private func extractMCPFromClaudeGlobalJSON() -> [MCPServerConfig] {
         guard let globalDict = try? configService.readJSON(at: configService.claudeGlobalConfigPath) else {
             return []
@@ -138,6 +98,7 @@ final class SyncService: @unchecked Sendable {
             servers.contains { $0.name == name && $0.sourceProject == source }
         }
 
+        // 1. Global mcpServers (top-level)
         if let globalServers = globalDict["mcpServers"] as? [String: [String: Any]] {
             for srv in parseMCPServerEntries(globalServers) {
                 srv.sourceProject = nil
@@ -145,6 +106,7 @@ final class SyncService: @unchecked Sendable {
             }
         }
 
+        // 2. Per-project entries
         if let projects = globalDict["projects"] as? [String: [String: Any]] {
             let homePath = NSHomeDirectory()
 
@@ -169,10 +131,7 @@ final class SyncService: @unchecked Sendable {
                     for entry in enabledList {
                         if !serverExists(name: entry, source: projectPath) {
                             let srvType: MCPServerConfig.MCPServerType = entry.hasPrefix("plugin:") ? .plugin : .builtin
-                            servers.append(MCPServerConfig(
-                                name: entry, serverType: srvType, command: "",
-                                args: [], env: [:], enabled: true, status: .running, sourceProject: projectPath
-                            ))
+                            servers.append(MCPServerConfig(name: entry, serverType: srvType, command: "", args: [], env: [:], enabled: true, status: .running, sourceProject: projectPath))
                         }
                     }
                 }
@@ -184,8 +143,7 @@ final class SyncService: @unchecked Sendable {
 
     private func applyProjectMCPServers(_ projectData: [String: Any], sourcePath: String, to servers: inout [MCPServerConfig]) {
         if let projectServers = projectData["mcpServers"] as? [String: [String: Any]] {
-            let projectMCPs = parseMCPServerEntries(projectServers)
-            for pmcp in projectMCPs {
+            for pmcp in parseMCPServerEntries(projectServers) {
                 pmcp.sourceProject = sourcePath
                 if let idx = servers.firstIndex(where: { $0.name == pmcp.name }) {
                     servers[idx] = pmcp
@@ -199,26 +157,19 @@ final class SyncService: @unchecked Sendable {
             for entry in enabledList {
                 if !servers.contains(where: { $0.name == entry }) {
                     let srvType: MCPServerConfig.MCPServerType = entry.hasPrefix("plugin:") ? .plugin : .builtin
-                    servers.append(MCPServerConfig(
-                        name: entry, serverType: srvType, command: "",
-                        args: [], env: [:], enabled: true, status: .running, sourceProject: sourcePath
-                    ))
+                    servers.append(MCPServerConfig(name: entry, serverType: srvType, command: "", args: [], env: [:], enabled: true, status: .running, sourceProject: sourcePath))
                 }
             }
         }
 
-        let disabledJsonServers = (projectData["disabledMcpjsonServers"] as? [String]) ?? []
-        let disabledServers = (projectData["disabledMcpServers"] as? [String]) ?? []
-        let allDisabled = Array(Set(disabledJsonServers + disabledServers))
-        for name in allDisabled {
+        let disabledJson = (projectData["disabledMcpjsonServers"] as? [String]) ?? []
+        let disabled = (projectData["disabledMcpServers"] as? [String]) ?? []
+        for name in Array(Set(disabledJson + disabled)) {
             if let idx = servers.firstIndex(where: { $0.name == name && $0.sourceProject == sourcePath }) {
                 servers[idx].enabled = false
             } else {
                 let srvType: MCPServerConfig.MCPServerType = name.hasPrefix("plugin:") ? .plugin : .builtin
-                servers.append(MCPServerConfig(
-                    name: name, serverType: srvType, command: "",
-                    args: [], env: [:], enabled: false, status: .stopped, sourceProject: sourcePath
-                ))
+                servers.append(MCPServerConfig(name: name, serverType: srvType, command: "", args: [], env: [:], enabled: false, status: .stopped, sourceProject: sourcePath))
             }
         }
     }

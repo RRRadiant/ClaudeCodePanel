@@ -12,7 +12,7 @@ struct MCPServerListView: View {
                         Text("MCP 服务器")
                             .font(.title)
                             .fontWeight(.semibold)
-                        Text("\(viewModel.servers.count) 个服务器 · 从 mcp.json 同步")
+                        Text("\(viewModel.servers.count) 个服务器 · 从 claude.json 同步")
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     }
