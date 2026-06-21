@@ -146,7 +146,7 @@ struct APIConfigView: View {
                         title: viewModel.isSaving ? "保存中..." : "保存配置",
                         systemImage: "square.and.arrow.down",
                         variant: .primary,
-                        action: { viewModel.saveConfig() }
+                        action: { Task { await viewModel.saveConfig() } }
                     )
                     .disabled(viewModel.isSaving)
                 }

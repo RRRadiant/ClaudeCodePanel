@@ -237,7 +237,7 @@ def main():
     print(f"  {result.stdout.strip()}")
     print(f"  Size: {OUTPUT_ICNS.stat().st_size / 1024:.0f} KB")
 
-    # Preview PNG
+# Preview PNG
     preview_path = OUTPUT_DIR.parent / "AppIcon_preview.png"
     render_icon(512).save(preview_path, "PNG")
     print(f"  Preview: {preview_path}")
@@ -247,5 +247,49 @@ def main():
     subprocess.run(["open", str(preview_path)])
 
 
+# ── DMG Background ─────────────────────────────────────────────────────
+
+def generate_dmg_background():
+    """Generate a clean DMG background image with arrow hint."""
+    bg_path = Path(__file__).resolve().parent.parent / "build" / "dmg_background.png"
+    w, h = 600, 400
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    # Gradient background
+    for y in range(h):
+        t = y / h
+        r = int(28 + (18 - 28) * t)
+        g = int(28 + (18 - 28) * t)
+        b = int(34 + (24 - 34) * t)
+        for x in range(w):
+            img.putpixel((x, y), (r, g, b, 255))
+
+    # Rounded rect outline for the app area
+    draw.rounded_rectangle([(80, 60), (260, 260)], radius=16, outline=(255, 255, 255, 30), width=2)
+    draw.rounded_rectangle([(340, 60), (520, 260)], radius=16, outline=(255, 255, 255, 30), width=2)
+
+    # Arrow hint
+    arrow_y = 160
+    draw.line([(280, arrow_y), (320, arrow_y)], fill=(255, 255, 255, 60), width=3)
+    draw.polygon([(320, arrow_y - 8), (330, arrow_y), (320, arrow_y + 8)], fill=(255, 255, 255, 60))
+
+    # Subtle labels
+    try:
+        # Use default system font
+        draw.text((170, 280), "Claude Code Panel.app", fill=(255, 255, 255, 90))
+        draw.text((430, 280), "Applications", fill=(255, 255, 255, 90))
+    except Exception:
+        pass
+
+    img.save(bg_path, "PNG")
+    print(f"  DMG background: {bg_path}")
+    return bg_path
+
+
 if __name__ == "__main__":
-    main()
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "--dmg-bg":
+        generate_dmg_background()
+    else:
+        main()

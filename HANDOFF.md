@@ -10,7 +10,7 @@
 | **构建系统** | Swift Package Manager（`swift build`） |
 | **语言** | Swift 6，`@Observable` 宏 |
 | **UI 框架** | SwiftUI（HSplitView 布局） |
-| **当前版本** | 1.8 |
+| **当前版本** | 1.9 |
 | **安装方式** | DMG → `/Applications` 拖放 |
 
 ## 项目结构
@@ -20,18 +20,18 @@ ClaudeCodePanel/
 ├── Package.swift                        # SPM 清单（macOS 26 可执行文件目标）
 ├── HANDOFF.md                           # 本文件
 ├── scripts/
-│   ├── build.sh                         # 一站式构建+打包脚本
-│   └── generate_icon.py                 # Python 图标生成（Pillow→iconutil）
+│   ├── build.sh                         # 一站式构建+打包脚本（含 DMG 背景+布局）
+│   ├── generate_icon.py                 # Python 图标生成（Pillow→iconutil）+ DMG 背景图
+│   └── notarize.sh                      # Apple 公证脚本（API Key / Apple ID）
 ├── ClaudeCodePanel/
 │   ├── App/
 │   │   ├── ClaudeCodePanelApp.swift     # @main 入口，NSApplication 设置
 │   │   └── AppDelegate.swift            # NSApp delegate
 │   ├── Models/
 │   │   ├── APIProvider.swift            # 提供商枚举 + ModelTier 层级映射
-│   │   ├── ClaudeConfig.swift           # Claude Code 配置模型
-│   │   ├── DashboardSummary.swift       # 面板摘要模型
 │   │   ├── MCPServerConfig.swift        # MCP 服务器配置模型（核心）
-│   │   └── SkillItem.swift              # 技能模型
+│   │   ├── SkillItem.swift              # 技能模型
+│   │   └── ReleaseInfo.swift            # 更新发布信息模型
 │   ├── Services/
 │   │   ├── ConfigFileService.swift      # 配置文件读写（JSON 原子写入）
 │   │   ├── FileWatcherService.swift     # 文件变更监控
@@ -59,7 +59,6 @@ ClaudeCodePanel/
 │       │   ├── ConfigEditorView.swift    # 配置文件编辑器（主视图）
 │       │   ├── ConfigFileList.swift      # 文件列表
 │       │   ├── ConfigCodeEditor.swift    # 代码编辑器
-│       │   └── ConfigDiffView.swift      # Diff 对比视图
 │       ├── MCP/
 │       │   ├── MCPServerListView.swift   # MCP 服务器列表+分组
 │       │   ├── MCPServerCard.swift       # 单个 MCP 服务器卡片
@@ -78,6 +77,12 @@ ClaudeCodePanel/
 │           ├── AsyncButton.swift          # 异步加载按钮
 │           ├── SearchField.swift          # 搜索框
 │           └── UtilityViews.swift         # 通用视图（EmptyState 等）
+│           ├── SyntaxHighlighter.swift       # JSON/TOML/YAML 语法高亮引擎
+│           └── HighlightedTextEditor.swift   # NSViewRepresentable 高亮编辑器
+├── Tests/
+│   ├── MCPServerConfigTests.swift        # MCPServerConfig 解析/序列化/显示测试
+│   ├── APIProviderTests.swift            # APIProvider + ModelTier 测试
+│   └── SyntaxHighlighterTests.swift      # 语法高亮 token 着色测试
 ```
 
 ## 架构
@@ -279,11 +284,14 @@ bash scripts/build.sh
 
 ## 待完成
 
-- [ ] per-project MCP 服务器编辑后写回 `~/.claude.json` 对应项目条目
-- [ ] 配置文件编辑器支持 `.toml` / `.yaml` 语法高亮
-- [ ] DMG 背景图 + Finder 图标布局
-- [ ] 应用公证（notarization）用于分发
-- [ ] 单元测试
+- [x] ~~per-project MCP 服务器编辑后写回 `~/.claude.json` 对应项目条目~~ (v1.9)
+- [x] ~~配置文件编辑器支持 `.toml` / `.yaml` 语法高亮~~ (v1.9)
+- [x] ~~DMG 背景图 + Finder 图标布局~~ (v1.9)
+- [x] ~~应用公证（notarization）脚本~~ (v1.9)
+- [x] ~~单元测试~~ (v1.9, 31 tests)
+- [ ] 应用公证（notarization）实际执行（需 Apple Developer 账号凭证）
+- [ ] 将 MCP 生命周期队列改为并发队列（避免一个进程阻塞所有进程的启停）
+- [ ] Keychain 操作增加错误反馈
 
 ## 外部依赖
 

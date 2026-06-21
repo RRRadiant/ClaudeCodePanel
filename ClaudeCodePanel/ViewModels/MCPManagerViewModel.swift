@@ -34,6 +34,9 @@ final class MCPManagerViewModel {
             .appendingPathComponent("mcp-display-names.json")
     }
 
+    // Auto-dismiss task tracking
+    private var dismissSuccessTask: Task<Void, Never>?
+
     // MARK: - Sync
 
     func loadServers() {
@@ -45,8 +48,12 @@ final class MCPManagerViewModel {
         syncFromClaudeJSON()
         isSyncing = false
         successMessage = "已从 claude.json 同步 \(servers.count) 个服务器"
-        Task {
+
+        // Cancel previous dismiss before scheduling a new one
+        dismissSuccessTask?.cancel()
+        dismissSuccessTask = Task {
             try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard !Task.isCancelled else { return }
             successMessage = nil
         }
     }
@@ -225,31 +232,62 @@ final class MCPManagerViewModel {
             return
         }
 
-        // Rebuild global mcpServers dict from current state
-        var mcpServers: [String: [String: Any]] = [:]
+        // Separate global vs per-project stdio/sse servers
+        var globalServers: [String: [String: Any]] = [:]
+        var projectServers: [String: [MCPServerConfig]] = [:] // projectPath → servers
+
         for srv in servers {
-            switch srv.serverType {
-            case .stdio, .sse:
-                mcpServers[srv.name] = srv.toClaudeJSONEntry()
-            case .builtin, .plugin:
-                break
+            guard srv.serverType == .stdio || srv.serverType == .sse else { continue }
+            if let proj = srv.sourceProject {
+                projectServers[proj, default: []].append(srv)
+            } else {
+                globalServers[srv.name] = srv.toClaudeJSONEntry()
             }
         }
-        root["mcpServers"] = mcpServers
 
-        // Update per-project mcpServers references
+        // Write global mcpServers (global servers only)
+        root["mcpServers"] = globalServers
+
+        // Write per-project mcpServers with full definitions
         if var projects = root["projects"] as? [String: [String: Any]] {
-            // Group servers by project
-            var projNames: [String: [String]] = [:] // project path -> [server names]
+            for (projPath, srvList) in projectServers {
+                var pdata = projects[projPath] ?? [:]
+                var projDefs: [String: [String: Any]] = [:]
 
-            for srv in servers where srv.sourceProject != nil {
-                guard srv.serverType == .stdio || srv.serverType == .sse else { continue }
-                projNames[srv.sourceProject!, default: []].append(srv.name)
+                // Preserve existing full definitions that we haven't touched
+                if let existing = pdata["mcpServers"] as? [String: [String: Any]] {
+                    projDefs = existing
+                }
+
+                // Overwrite with current in-memory state for servers in this project
+                for srv in srvList {
+                    projDefs[srv.name] = srv.toClaudeJSONEntry()
+                }
+
+                pdata["mcpServers"] = projDefs
+                projects[projPath] = pdata
             }
 
-            for (projPath, names) in projNames {
-                var pdata = projects[projPath] ?? [:]
-                pdata["mcpServers"] = names
+            // Clean up stale project mcpServers entries: remove servers
+            // that were deleted from projects still tracked in claude.json
+            for (projPath, var pdata) in projects {
+                guard projectServers[projPath] == nil else { continue }
+                // This project has no in-memory servers — if it only has mcpServers
+                // and no enabledMcpjsonServers/disabledMcpServers, we can leave it.
+                // But if it had mcpServers that are now empty, clean them up.
+                if var existing = pdata["mcpServers"] as? [String: [String: Any]] {
+                    // Remove servers that belong to this project but no longer exist in memory
+                    let liveNames = Set(servers.filter { $0.sourceProject == projPath }.map(\.name))
+                    let staleNames = Set(existing.keys).subtracting(liveNames)
+                    for stale in staleNames {
+                        existing.removeValue(forKey: stale)
+                    }
+                    if existing.isEmpty {
+                        pdata.removeValue(forKey: "mcpServers")
+                    } else {
+                        pdata["mcpServers"] = existing
+                    }
+                }
                 projects[projPath] = pdata
             }
 

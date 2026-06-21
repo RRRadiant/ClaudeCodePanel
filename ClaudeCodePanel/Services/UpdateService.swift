@@ -1,4 +1,5 @@
 import Foundation
+import os.lock
 
 /// Checks for new releases by reading a static version.json file (no rate limit),
 /// with GitHub API as fallback.
@@ -25,15 +26,30 @@ final class UpdateService: @unchecked Sendable {
         return URLSession(configuration: config)
     }()
 
-    // MARK: - Cache
+    // MARK: - Cache (synchronized)
 
-    private var lastCheckResult: ReleaseInfo?
-    private var lastCheckTime: Date = .distantPast
+    private let cacheLock = OSAllocatedUnfairLock()
+    private var _lastCheckResult: ReleaseInfo?
+    private var _lastCheckTime: Date = .distantPast
     private let cacheDuration: TimeInterval = 3600
+
+    private var cachedResult: (time: Date, result: ReleaseInfo?)? {
+        get { cacheLock.withLock { _lastCheckTime == .distantPast ? nil : (_lastCheckTime, _lastCheckResult) } }
+        set {
+            cacheLock.withLock {
+                if let v = newValue {
+                    _lastCheckTime = v.time
+                    _lastCheckResult = v.result
+                } else {
+                    _lastCheckTime = .distantPast
+                    _lastCheckResult = nil
+                }
+            }
+        }
+    }
 
     private var _ghTokenLoaded = false
     private var _ghToken: String?
-
     private var ghToken: String? {
         if !_ghTokenLoaded { _ghToken = readGHToken(); _ghTokenLoaded = true }
         return _ghToken
@@ -42,14 +58,12 @@ final class UpdateService: @unchecked Sendable {
     // MARK: - Public
 
     func checkForUpdate() async throws -> ReleaseInfo? {
-        let now = Date()
-        if now.timeIntervalSince(lastCheckTime) < cacheDuration {
-            return lastCheckResult
+        if let cached = cachedResult, Date().timeIntervalSince(cached.time) < cacheDuration {
+            return cached.result
         }
 
         let result = try await fetchAndCompare()
-        lastCheckTime = now
-        lastCheckResult = result
+        cachedResult = (Date(), result)
         return result
     }
 
@@ -147,13 +161,20 @@ final class UpdateService: @unchecked Sendable {
     private func readGHToken() -> String? {
         let path = NSHomeDirectory() + "/.config/gh/hosts.yml"
         guard let content = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
-        for line in content.split(separator: "\n") {
-            let t = line.trimmingCharacters(in: .whitespaces)
-            if t.hasPrefix("oauth_token:") {
-                return t.replacingOccurrences(of: "oauth_token:", with: "").trimmingCharacters(in: .whitespaces)
-            }
-        }
-        return nil
+
+        // Match YAML key: "oauth_token: VALUE" (handles quotes, leading whitespace)
+        let pattern = try? NSRegularExpression(
+            pattern: #"^\s*oauth_token:\s*"?([^"\n]+)"?\s*$"#,
+            options: [.anchorsMatchLines]
+        )
+        guard let pattern else { return nil }
+
+        let nsContent = content as NSString
+        guard let match = pattern.firstMatch(in: content, options: [], range: NSRange(location: 0, length: nsContent.length)),
+              match.numberOfRanges > 1 else { return nil }
+
+        let tokenRange = match.range(at: 1)
+        return nsContent.substring(with: tokenRange).trimmingCharacters(in: .whitespaces)
     }
 
     // MARK: - Version helpers

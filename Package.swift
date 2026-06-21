@@ -10,5 +10,10 @@ let package = Package(
             path: "ClaudeCodePanel",
             resources: []
         ),
+        .testTarget(
+            name: "ClaudeCodePanelTests",
+            dependencies: ["ClaudeCodePanel"],
+            path: "Tests"
+        ),
     ]
 )

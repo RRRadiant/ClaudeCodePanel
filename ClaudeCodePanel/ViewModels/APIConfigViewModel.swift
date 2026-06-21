@@ -24,7 +24,7 @@ final class APIConfigViewModel {
         case failed(String)
     }
 
-    // Model tier config — maps to ANTHROPIC_DEFAULT_{TIER}_MODEL env vars
+    // Model tier config
     var tierModels: [ModelTier: String] = [:]
 
     private let configService = ConfigFileService.shared
@@ -41,50 +41,55 @@ final class APIConfigViewModel {
             baseURL = provider.defaultBaseURL
         }
 
-        // Tier models from SyncService (already merged settings + local overrides)
         tierModels = synced.tierModels
-        // Fallback: use provider defaults for missing tiers
         for tier in ModelTier.allCases {
             if tierModels[tier]?.isEmpty ?? true {
                 tierModels[tier] = defaultModelForTier(tier)
             }
         }
 
-        // Set selected from ANTHROPIC_MODEL env if present
         if selectedModel.isEmpty {
             selectedModel = tierModels[.sonnet] ?? ""
         }
     }
 
-    func saveConfig() {
+    func saveConfig() async {
         isSaving = true
+        defer { isSaving = false }
         errorMessage = nil
         successMessage = nil
 
-        var currentSettings = (try? configService.readJSON(at: configService.settingsPath)) ?? [:]
+        let currentSettings: [String: Any]
+        do {
+            currentSettings = (try? configService.readJSON(at: configService.settingsPath)) ?? [:]
+        }
+
         var env = currentSettings["env"] as? [String: String] ?? [:]
 
         env["ANTHROPIC_AUTH_TOKEN"] = apiKey
         env["ANTHROPIC_BASE_URL"] = baseURL
         env["ANTHROPIC_MODEL"] = selectedModel
 
-        // Save tier models
         for tier in ModelTier.allCases {
             if let model = tierModels[tier], !model.isEmpty {
                 env[tier.envKey] = model
             }
         }
 
-        currentSettings["env"] = env
+        var updatedSettings = currentSettings
+        updatedSettings["env"] = env
 
+        // Serialize on main actor, write on background
+        let settingsPath = configService.settingsPath
         do {
-            try configService.writeJSON(currentSettings, to: configService.settingsPath)
+            let data = try JSONSerialization.data(withJSONObject: updatedSettings, options: [.prettyPrinted, .sortedKeys])
+            try await Task.detached {
+                try data.write(to: settingsPath, options: .atomic)
+            }.value
             successMessage = "配置已保存"
         } catch {
             errorMessage = "保存失败: \(error.localizedDescription)"
         }
-
-        isSaving = false
     }
 
     func detectModels() async {
@@ -94,6 +99,7 @@ final class APIConfigViewModel {
         }
 
         isDetectingModels = true
+        defer { isDetectingModels = false }
         errorMessage = nil
         detectedModels = []
 
@@ -101,7 +107,6 @@ final class APIConfigViewModel {
 
         guard let url = URL(string: modelsURL) else {
             errorMessage = "无效的 Base URL"
-            isDetectingModels = false
             return
         }
 
@@ -120,15 +125,14 @@ final class APIConfigViewModel {
             } else {
                 errorMessage = "无效的响应格式"
             }
+        } catch is CancellationError {
+            return // Don't set errorMessage for cancellations
         } catch {
             errorMessage = "模型检测失败: \(error.localizedDescription)"
         }
-
-        isDetectingModels = false
     }
 
     func autoAssignModels() {
-        // Auto-assign detected models to tiers based on name heuristics
         for tier in ModelTier.allCases {
             let match = detectedModels.first { model in
                 let lower = model.lowercased()
@@ -158,12 +162,12 @@ final class APIConfigViewModel {
         }
 
         isTestingConnection = true
+        defer { isTestingConnection = false }
         connectionStatus = .testing
 
         let modelsURL = baseURL.hasSuffix("/") ? "\(baseURL)v1/models" : "\(baseURL)/v1/models"
         guard let url = URL(string: modelsURL) else {
             connectionStatus = .failed("无效的 URL")
-            isTestingConnection = false
             return
         }
 
@@ -180,11 +184,11 @@ final class APIConfigViewModel {
                     connectionStatus = .failed("HTTP \(http.statusCode)")
                 }
             }
+        } catch is CancellationError {
+            connectionStatus = .unknown
         } catch {
             connectionStatus = .failed(error.localizedDescription)
         }
-
-        isTestingConnection = false
     }
 
     func importDetectedModel() {

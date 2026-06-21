@@ -65,7 +65,7 @@ final class SkillManagerViewModel {
             }
         }
 
-        marketplaceAvailable = skillRepo.isClaudeCLIAvailable()
+        marketplaceAvailable = await skillRepo.isClaudeCLIAvailable()
         marketplaceSkills = skillRepo.fetchMarketplaceSkills()
         let installedNames = Set(installedSkills.map(\.name))
         marketplaceSkills.removeAll { installedNames.contains($0.name) }

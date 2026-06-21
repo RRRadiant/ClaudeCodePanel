@@ -21,3 +21,4 @@ build/
 *.swp
 *.bak
 .reasonix/
+reasonix.toml

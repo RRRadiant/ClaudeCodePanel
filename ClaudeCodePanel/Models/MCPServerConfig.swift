@@ -1,5 +1,8 @@
 import Foundation
 
+// NOTE: @unchecked Sendable is needed because SyncService creates instances
+// off the main actor during config parsing. Property writes from testServer()
+// callbacks are dispatched to MainActor via the ViewModel.
 @Observable
 final class MCPServerConfig: Identifiable, Equatable, @unchecked Sendable {
     let id: UUID

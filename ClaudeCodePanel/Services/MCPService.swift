@@ -3,50 +3,63 @@ import Foundation
 final class MCPService: @unchecked Sendable {
     static let shared = MCPService()
 
-    private var processes: [UUID: Process] = [:]
-    private let queue = DispatchQueue(label: "com.claudecodepanel.mcp")
+    /// Concurrent queue — each process gets its own lifecycle without blocking others.
+    private let queue = DispatchQueue(label: "com.claudecodepanel.mcp", attributes: .concurrent)
+    /// Synchronized access to the processes dictionary.
+    private let lock = NSLock()
+    private var _processes: [UUID: Process] = [:]
+    private var processes: [UUID: Process] {
+        get { lock.withLock { _processes } }
+        set { lock.withLock { _processes = newValue } }
+    }
 
     // MARK: - Long-running server management
 
-    func startServer(_ config: MCPServerConfig, onStatusChange: @escaping (MCPServerConfig.MCPServerStatus) -> Void) {
+    func startServer(_ config: MCPServerConfig, onStatusChange: @escaping @MainActor (MCPServerConfig.MCPServerStatus) -> Void) {
         guard config.serverType == .stdio else { return }
 
-        queue.async { [weak self] in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            process.arguments = [config.command] + config.args
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = [config.command] + config.args
 
-            var env = ProcessInfo.processInfo.environment
-            for (key, value) in config.env {
-                env[key] = value
-            }
-            process.environment = env
+        var env = ProcessInfo.processInfo.environment
+        for (key, value) in config.env {
+            env[key] = value
+        }
+        process.environment = env
 
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = pipe
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
 
-            do {
-                try process.run()
-                onStatusChange(.running)
-                self?.processes[config.id] = process
-                process.waitUntilExit()
+        // Use terminationHandler for async exit handling — never blocks a queue
+        process.terminationHandler = { [weak self] proc in
+            Task { @MainActor in
                 onStatusChange(.stopped)
-                self?.queue.async {
-                    self?.processes[config.id] = nil
-                }
-            } catch {
+            }
+            self?.lock.withLock {
+                self?._processes[config.id] = nil
+            }
+        }
+
+        do {
+            try process.run()
+            lock.withLock { _processes[config.id] = process }
+            Task { @MainActor in
+                onStatusChange(.running)
+            }
+        } catch {
+            Task { @MainActor in
                 onStatusChange(.error)
             }
         }
     }
 
     func stopServer(_ config: MCPServerConfig) {
-        queue.async { [weak self] in
-            guard let process = self?.processes[config.id] else { return }
-            process.terminate()
-            self?.processes[config.id] = nil
-        }
+        let process = lock.withLock { _processes[config.id] }
+        guard let process, process.isRunning else { return }
+        process.terminate()
+        lock.withLock { _processes[config.id] = nil }
     }
 
     // MARK: - Connection tests (return results for UI display)
@@ -65,7 +78,6 @@ final class MCPService: @unchecked Sendable {
 
         var request = URLRequest(url: url)
         request.timeoutInterval = timeout
-        // SSE clients send Accept: text/event-stream
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
 
         do {
@@ -110,7 +122,6 @@ final class MCPService: @unchecked Sendable {
     }
 
     /// Test a STDIO server by launching the process and seeing if it stays alive.
-    /// Returns after `waitSeconds` — if the process is still running, it's considered healthy.
     func testSTDIO(command: String, args: [String], env: [String: String] = [:], waitSeconds: Double = 3) async -> TestResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
@@ -160,21 +171,17 @@ final class MCPService: @unchecked Sendable {
 
         let pid = process.processIdentifier
 
-        // Wait the specified duration, with cancellation safety
         do {
             try await Task.sleep(nanoseconds: UInt64(waitSeconds * 1_000_000_000))
         } catch {
-            // Cancelled or interrupted — clean up the test process
             if process.isRunning {
                 process.terminate()
             }
             return TestResult(success: false, message: "测试被取消", detail: "PID \(pid) 已终止")
         }
 
-        // Check if still running
         if process.isRunning {
             process.terminate()
-            // Collect any stderr output
             let stderrData = try? stderrPipe.fileHandleForReading.readToEnd()
             let stderrStr = stderrData.flatMap { String(data: $0, encoding: .utf8) }?
                 .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) ?? ""

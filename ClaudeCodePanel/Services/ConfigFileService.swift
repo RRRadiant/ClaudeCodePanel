@@ -112,12 +112,8 @@ final class ConfigFileService: @unchecked Sendable {
         }
 
         let data = try JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys])
-        let tempURL = url.appendingPathExtension("tmp")
-        try data.write(to: tempURL, options: .atomic)
-        if fileManager.fileExists(atPath: url.path) {
-            try fileManager.removeItem(at: url)
-        }
-        try fileManager.moveItem(at: tempURL, to: url)
+        // .atomic writes to temp and renames — one step, no manual move needed
+        try data.write(to: url, options: .atomic)
     }
 
     func ensureDirectoryExists(at url: URL) throws {
@@ -130,7 +126,7 @@ final class ConfigFileService: @unchecked Sendable {
 // MARK: - Config File Info
 
 struct ConfigFileInfo: Identifiable {
-    let id = UUID()
+    var id: String { path }
     let name: String
     let path: String
     let type: FileType

@@ -43,7 +43,10 @@ struct ConfigEditorView: View {
                     GlassDivider()
 
                     // Code editor
-                    ConfigCodeEditor(text: $viewModel.fileContent) { _ in
+                    ConfigCodeEditor(
+                        text: $viewModel.fileContent,
+                        fileType: viewModel.selectedFile.flatMap { SyntaxFileType(filename: $0.name) }
+                    ) { _ in
                         viewModel.isModified = true
                     }
                 } else {
