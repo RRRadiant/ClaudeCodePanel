@@ -230,93 +230,42 @@ final class MCPManagerViewModel {
     }
 
     private func persistServers() async {
-        let claudePath = configService.claudeGlobalConfigPath
+        let mcpPath = configService.mcpPath
 
-        // Read existing ~/.claude.json (preserve all non-MCP keys)
-        guard var root = try? configService.readJSON(at: claudePath) else {
-            errorMessage = "无法读取 claude.json"
-            return
-        }
-
-        // Rebuild global mcpServers from current server state.
-        // All stdio/sse servers go here — both global and project-scoped.
-        // (In claude.json, project mcpServers arrays only reference names defined globally.)
-        var mcpServers: [String: [String: Any]] = [:]
+        // Read existing mcp.json (preserve any unknown keys)
+        var root = (try? configService.readJSON(at: mcpPath)) ?? [:]
+        // Keep top-level keys we don't manage
+        var servers: [[String: Any]] = []
         var managedNames: Set<String> = []
-        for srv in servers {
+
+        for srv in self.servers {
             switch srv.serverType {
             case .stdio, .sse:
-                mcpServers[srv.name] = srv.toClaudeJSONEntry()
+                var entry = srv.toClaudeJSONEntry()
+                entry["name"] = srv.name
+                entry["enabled"] = srv.enabled
+                servers.append(entry)
                 managedNames.insert(srv.name)
             case .builtin, .plugin:
                 managedNames.insert(srv.name)
             }
         }
-        root["mcpServers"] = mcpServers
 
-        // Update per-project mcpServers arrays and builtin/plugin lists
-        var projects = (root["projects"] as? [String: [String: Any]]) ?? [:]
-
-        // Collect per-project data from current servers
-        var projStdioNames: [String: [String]] = [:]       // project path → stdio/sse names
-        var projBuiltinNames: [String: [String]] = [:]      // project path → enabled builtin/plugin names
-        var projDisabledNames: [String: [String]] = [:]     // project path → disabled builtin/plugin names
-
-        for srv in servers {
-            guard let proj = srv.sourceProject else { continue }
-            switch srv.serverType {
-            case .stdio, .sse:
-                projStdioNames[proj, default: []].append(srv.name)
-            case .builtin, .plugin:
-                if srv.enabled {
-                    projBuiltinNames[proj, default: []].append(srv.name)
-                } else {
-                    projDisabledNames[proj, default: []].append(srv.name)
+        // Preserve servers not managed by us
+        if let existingServers = root["servers"] as? [[String: Any]] {
+            for entry in existingServers {
+                if let name = entry["name"] as? String, !managedNames.contains(name) {
+                    servers.append(entry)
                 }
             }
         }
 
-        // Walk all project entries: rebuild managed arrays, leave unknown keys alone
-        let allRelevantProjects = Set(projStdioNames.keys)
-            .union(projBuiltinNames.keys)
-            .union(projDisabledNames.keys)
+        root["servers"] = servers
 
-        for projPath in allRelevantProjects {
-            var pdata = projects[projPath] ?? [:]
-
-            // stdio/sse references
-            let stdioList = projStdioNames[projPath] ?? []
-            pdata["mcpServers"] = stdioList
-
-            // builtin/plugin — merge with existing entries the app doesn't manage
-            let existingBuiltins = (pdata["enabledMcpjsonServers"] as? [String]) ?? []
-            let existingEnabled  = (pdata["enabledMcpServers"] as? [String]) ?? []
-            let newBuiltins = projBuiltinNames[projPath] ?? []
-            // Keep entries that the app didn't touch
-            let untouchedBuiltins = existingBuiltins.filter { !managedNames.contains($0) }
-            let untouchedEnabled  = existingEnabled.filter { !managedNames.contains($0) }
-            pdata["enabledMcpjsonServers"] = untouchedBuiltins + newBuiltins
-            pdata["enabledMcpServers"] = untouchedEnabled
-
-            // disabled
-            let existingDisabledJson = (pdata["disabledMcpjsonServers"] as? [String]) ?? []
-            let existingDisabled     = (pdata["disabledMcpServers"] as? [String]) ?? []
-            let newDisabled = projDisabledNames[projPath] ?? []
-            let untouchedDisabledJson = existingDisabledJson.filter { !managedNames.contains($0) }
-            let untouchedDisabled     = existingDisabled.filter { !managedNames.contains($0) }
-            pdata["disabledMcpjsonServers"] = untouchedDisabledJson + newDisabled
-            pdata["disabledMcpServers"] = untouchedDisabled
-
-            projects[projPath] = pdata
-        }
-
-        root["projects"] = projects
-
-        // Atomic write
         do {
-            try configService.writeJSON(root, to: claudePath)
+            try configService.writeJSON(root, to: mcpPath)
         } catch {
-            errorMessage = "保存到 claude.json 失败: \(error.localizedDescription)"
+            errorMessage = "保存到 mcp.json 失败: \(error.localizedDescription)"
         }
     }
 
